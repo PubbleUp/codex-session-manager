@@ -13,7 +13,7 @@ func FormatProjects(projects []domain.ProjectRecord) string {
 	var builder strings.Builder
 	for _, project := range projects {
 		builder.WriteString(fmt.Sprintf(
-			"%s  total=%d visible=%d recoverable=%d backup=%d updated=%s\n",
+			"%s  总数=%d 可见=%d 可恢复=%d 备份=%d 更新时间=%s\n",
 			project.CWD,
 			project.TotalSessions,
 			project.VisibleCount,
@@ -41,10 +41,10 @@ func FormatSessions(sessions []domain.SessionRecord, projectPath string) string 
 			continue
 		}
 		builder.WriteString(fmt.Sprintf(
-			"%s  %-11s %-9s %-32s updated=%s cwd=%s\n",
+			"%s  %-11s %-9s %-32s 更新时间=%s 项目=%s\n",
 			session.ID,
-			session.Status,
-			session.Source,
+			statusText(session.Status),
+			sourceText(session.Source),
 			displayName(session),
 			formatTime(session.UpdatedAt),
 			session.CWD,
@@ -61,6 +61,46 @@ func displayName(session domain.SessionRecord) string {
 		return session.ID[:8]
 	}
 	return session.ID
+}
+
+func statusText(status domain.SessionStatus) string {
+	switch status {
+	case domain.SessionStatusVisible:
+		return "可见"
+	case domain.SessionStatusInactive:
+		return "不可见"
+	case domain.SessionStatusArchived:
+		return "已归档"
+	case domain.SessionStatusRecoverable:
+		return "可恢复"
+	case domain.SessionStatusBackedUp:
+		return "已备份"
+	case domain.SessionStatusRemoved:
+		return "已删除"
+	case domain.SessionStatusConflict:
+		return "冲突"
+	default:
+		return string(status)
+	}
+}
+
+func sourceText(source domain.SessionSource) string {
+	switch source {
+	case domain.SessionSourceVisible:
+		return "当前"
+	case domain.SessionSourceInactive:
+		return "不可见"
+	case domain.SessionSourceArchived:
+		return "归档"
+	case domain.SessionSourceBackup:
+		return "备份"
+	case domain.SessionSourceOldHome:
+		return "旧目录"
+	case domain.SessionSourceRemoved:
+		return "删除区"
+	default:
+		return string(source)
+	}
 }
 
 func FormatRepairReport(report restoresvc.RepairReport) string {
