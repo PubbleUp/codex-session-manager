@@ -41,7 +41,7 @@ func CopyFile(src string, dst string) error {
 
 	if err := os.Rename(tmp, dst); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("replace target file: %w", err)
+		return fmt.Errorf("替换目标文件失败：%w", err)
 	}
 	return nil
 }

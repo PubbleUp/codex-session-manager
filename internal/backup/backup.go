@@ -15,10 +15,10 @@ import (
 // BackupSession 将 session 文件备份到工具备份目录。
 func BackupSession(cfg config.Config, session domain.SessionRecord) (domain.BackupManifest, error) {
 	if session.ID == "" {
-		return domain.BackupManifest{}, fmt.Errorf("missing session id")
+		return domain.BackupManifest{}, fmt.Errorf("缺少会话 ID")
 	}
 	if !fsutil.FileExists(session.FilePath) {
-		return domain.BackupManifest{}, fmt.Errorf("session file not found: %s", session.FilePath)
+		return domain.BackupManifest{}, fmt.Errorf("会话文件不存在：%s", session.FilePath)
 	}
 	sha, err := fsutil.SHA256File(session.FilePath)
 	if err != nil {
@@ -36,7 +36,7 @@ func BackupSession(cfg config.Config, session domain.SessionRecord) (domain.Back
 			return domain.BackupManifest{}, err
 		}
 		if existingSHA != sha && !cfg.AllowOverwrite {
-			return domain.BackupManifest{}, fmt.Errorf("backup conflict: %s already exists with different content", session.ID)
+			return domain.BackupManifest{}, fmt.Errorf("备份冲突：%s 已存在且内容不同", session.ID)
 		}
 	}
 
@@ -51,7 +51,7 @@ func BackupSession(cfg config.Config, session domain.SessionRecord) (domain.Back
 		return domain.BackupManifest{}, err
 	}
 	if copiedSHA != sha {
-		return domain.BackupManifest{}, fmt.Errorf("backup hash mismatch")
+		return domain.BackupManifest{}, fmt.Errorf("备份后哈希校验失败")
 	}
 
 	manifest := domain.BackupManifest{
