@@ -62,6 +62,7 @@ type Model struct {
 	columnRows            []int
 	pendingProject        string
 	pendingSession        string
+	pendingSessionPath    string
 	pendingColumn         int
 	pendingRow            int
 	renaming              bool
@@ -106,7 +107,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.inventory = msg.inventory
 		m.err = nil
-		m.status = fmt.Sprintf("已加载 %d 个项目，%d 个 session", len(msg.inventory.Projects), len(msg.inventory.Sessions))
+		m.status = fmt.Sprintf("已加载 %d 个项目，%d 个会话", len(msg.inventory.Projects), len(msg.inventory.Sessions))
 		m.restorePendingSelection()
 		m.clampSelection()
 	case actionMsg:
@@ -119,6 +120,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = msg.message
 		if msg.forgetSession {
 			m.pendingSession = ""
+			m.pendingSessionPath = ""
 		}
 		return m, m.scanCmd()
 	case renameMsg:
@@ -144,6 +146,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.app.Config.HiddenProjects = appendHiddenProject(m.app.Config.HiddenProjects, msg.projectPath)
 		m.pendingProject = ""
 		m.pendingSession = ""
+		m.pendingSessionPath = ""
 		m.pendingProjectRow = msg.row
 		m.pendingProjectRowSet = true
 		return m, m.scanCmd()
@@ -159,6 +162,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectedHiddenProject = msg.row
 		m.pendingProject = msg.projectPath
 		m.pendingSession = ""
+		m.pendingSessionPath = ""
 		m.page = pageProjects
 		return m, m.scanCmd()
 	case tea.KeyMsg:
@@ -438,6 +442,7 @@ func (m *Model) capturePendingSelection() {
 	}
 	if session, ok := m.currentSession(); ok {
 		m.pendingSession = session.ID
+		m.pendingSessionPath = session.FilePath
 		m.pendingColumn = m.selectedColumn
 		m.pendingRow = m.selectedRow
 	}
@@ -460,9 +465,10 @@ func (m *Model) restorePendingSelection() {
 		}
 	}
 	if m.pendingSession != "" {
-		if m.selectSessionByID(m.pendingSession) {
+		if m.selectSession(m.pendingSession, m.pendingSessionPath) {
 			m.pendingProject = ""
 			m.pendingSession = ""
+			m.pendingSessionPath = ""
 			return
 		}
 	}
@@ -471,6 +477,7 @@ func (m *Model) restorePendingSelection() {
 	}
 	m.pendingProject = ""
 	m.pendingSession = ""
+	m.pendingSessionPath = ""
 }
 
 func (m Model) backupCmd(sessionID string) tea.Cmd {
@@ -749,11 +756,24 @@ func (m *Model) ensureSessionSelection() {
 	m.syncColumnRow()
 }
 
-func (m *Model) selectSessionByID(sessionID string) bool {
+func (m *Model) selectSession(sessionID string, filePath string) bool {
 	columns := groupSessions(m.projectSessions())
+	if filePath != "" {
+		if m.selectSessionInColumns(columns, func(session domain.SessionRecord) bool {
+			return session.ID == sessionID && session.FilePath == filePath
+		}) {
+			return true
+		}
+	}
+	return m.selectSessionInColumns(columns, func(session domain.SessionRecord) bool {
+		return session.ID == sessionID
+	})
+}
+
+func (m *Model) selectSessionInColumns(columns []sessionColumn, matches func(domain.SessionRecord) bool) bool {
 	if m.pendingColumn >= 0 && m.pendingColumn < len(columns) {
 		for rowIndex, session := range columns[m.pendingColumn].Sessions {
-			if session.ID == sessionID {
+			if matches(session) {
 				m.selectedColumn = m.pendingColumn
 				m.selectedRow = rowIndex
 				m.syncColumnRow()
@@ -766,7 +786,7 @@ func (m *Model) selectSessionByID(sessionID string) bool {
 			continue
 		}
 		for rowIndex, session := range columns[column].Sessions {
-			if session.ID == sessionID {
+			if matches(session) {
 				m.selectedColumn = column
 				m.selectedRow = rowIndex
 				m.syncColumnRow()
@@ -1052,12 +1072,12 @@ func (m Model) viewSessions() string {
 	}
 	sessions := m.projectSessions()
 	var builder strings.Builder
-	builder.WriteString(titleStyle.Render("Session 列表"))
+	builder.WriteString(titleStyle.Render("会话列表"))
 	builder.WriteString(" ")
 	builder.WriteString(mutedStyle.Render(project.CWD))
 	builder.WriteString("\n\n")
 	if len(sessions) == 0 {
-		builder.WriteString("没有扫描到 session。\n")
+		builder.WriteString("没有扫描到会话。\n")
 		return builder.String()
 	}
 
@@ -1076,11 +1096,11 @@ func (m Model) viewSessions() string {
 func (m Model) viewDetail() string {
 	session, ok := m.currentSession()
 	if !ok {
-		return "没有选中 session。"
+		return "没有选中会话。"
 	}
 	return fmt.Sprintf(
-		"%s\n\nID：%s\n名称：%s\n状态：%s\n来源：%s\n项目：%s\n文件：%s\n原路径：%s\nCLI：%s\nProvider：%s\n大小：%d\nSHA256：%s\n",
-		titleStyle.Render("Session 详情"),
+		"%s\n\nID：%s\n名称：%s\n状态：%s\n来源：%s\n项目：%s\n文件：%s\n原路径：%s\nCLI：%s\n服务商：%s\n大小：%d\nSHA256：%s\n",
+		titleStyle.Render("会话详情"),
 		session.ID,
 		displaySessionTitle(session, 120),
 		statusLabel(session),
@@ -1138,7 +1158,7 @@ const (
 	sessionColumnGap          = 2
 )
 
-var sessionColumnTitles = []string{"可见", "别的账号", "归档", "删除"}
+var sessionColumnTitles = []string{"可见", "不可见", "归档", "删除"}
 
 type sessionColumn struct {
 	Title    string
@@ -1150,30 +1170,12 @@ func groupSessions(sessions []domain.SessionRecord) []sessionColumn {
 	for i, title := range sessionColumnTitles {
 		groups[i].Title = title
 	}
-	seenDeleted := map[string]int{}
 
 	for _, session := range sessions {
 		column := sessionColumnIndex(session)
-		if column == deletedColumn {
-			if index, ok := seenDeleted[session.ID]; ok {
-				existing := groups[column].Sessions[index]
-				if shouldReplaceDeletedSession(existing, session) {
-					groups[column].Sessions[index] = session
-				}
-				continue
-			}
-			seenDeleted[session.ID] = len(groups[column].Sessions)
-		}
 		groups[column].Sessions = append(groups[column].Sessions, session)
 	}
 	return groups
-}
-
-func shouldReplaceDeletedSession(existing domain.SessionRecord, candidate domain.SessionRecord) bool {
-	if existing.Source != candidate.Source {
-		return candidate.Source == domain.SessionSourceRemoved
-	}
-	return candidate.UpdatedAt.After(existing.UpdatedAt)
 }
 
 func sessionColumnIndex(session domain.SessionRecord) int {
@@ -1182,6 +1184,8 @@ func sessionColumnIndex(session domain.SessionRecord) int {
 		return deletedColumn
 	case session.Source == domain.SessionSourceVisible:
 		return visibleColumn
+	case session.Source == domain.SessionSourceInactive:
+		return oldHomeColumn
 	case session.Source == domain.SessionSourceOldHome:
 		return oldHomeColumn
 	case session.Source == domain.SessionSourceArchived:
@@ -1257,8 +1261,10 @@ func statusLabel(session domain.SessionRecord) string {
 	switch session.Source {
 	case domain.SessionSourceVisible:
 		return "可见"
+	case domain.SessionSourceInactive:
+		return "不可见"
 	case domain.SessionSourceOldHome:
-		return "别的账号"
+		return "不可见"
 	case domain.SessionSourceArchived:
 		return "归档"
 	case domain.SessionSourceRemoved:
@@ -1274,8 +1280,10 @@ func sourceLabel(source domain.SessionSource) string {
 	switch source {
 	case domain.SessionSourceVisible:
 		return "当前 CODEX_HOME"
+	case domain.SessionSourceInactive:
+		return "当前 CODEX_HOME / 当前 CLI 不可见"
 	case domain.SessionSourceOldHome:
-		return "旧 CODEX_HOME / 别的账号"
+		return "旧 CODEX_HOME / 不可见"
 	case domain.SessionSourceArchived:
 		return "归档目录"
 	case domain.SessionSourceRemoved:

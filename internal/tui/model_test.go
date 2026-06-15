@@ -44,7 +44,7 @@ func TestRestoreRowAfterMissingSessionKeepsSelectionInSameColumn(t *testing.T) {
 		column int
 	}{
 		{name: "可见列", column: visibleColumn},
-		{name: "别的账号列", column: oldHomeColumn},
+		{name: "不可见列", column: oldHomeColumn},
 		{name: "归档列", column: archivedColumn},
 		{name: "删除列", column: deletedColumn},
 	}
@@ -75,6 +75,74 @@ func TestSessionColumnWidthExpandsWithTerminalWidth(t *testing.T) {
 	model := Model{width: 166}
 	if got := model.sessionColumnWidth(); got != 40 {
 		t.Fatalf("expected width 40, got %d", got)
+	}
+}
+
+func TestInactiveSessionGoesToInvisibleColumn(t *testing.T) {
+	groups := groupSessions([]domain.SessionRecord{
+		{
+			ID:     "00000000-0000-0000-0000-000000000001",
+			Source: domain.SessionSourceInactive,
+			Status: domain.SessionStatusInactive,
+		},
+	})
+
+	if len(groups[oldHomeColumn].Sessions) != 1 {
+		t.Fatalf("expected inactive session in invisible column, got %+v", groups)
+	}
+	if label := statusLabel(groups[oldHomeColumn].Sessions[0]); label != "不可见" {
+		t.Fatalf("expected invisible label, got %q", label)
+	}
+}
+
+func TestGroupSessionsKeepsDeletedRecordsWithSameID(t *testing.T) {
+	sessionID := "00000000-0000-0000-0000-000000000001"
+	groups := groupSessions([]domain.SessionRecord{
+		{
+			ID:       sessionID,
+			FilePath: "/tmp/backups/" + sessionID + "/session.jsonl",
+			Source:   domain.SessionSourceBackup,
+			Status:   domain.SessionStatusRecoverable,
+		},
+		{
+			ID:       sessionID,
+			FilePath: "/tmp/removed/" + sessionID + "/session.jsonl",
+			Source:   domain.SessionSourceRemoved,
+			Status:   domain.SessionStatusRemoved,
+		},
+	})
+
+	if got := len(groups[deletedColumn].Sessions); got != 2 {
+		t.Fatalf("expected two deleted records with same id, got %d", got)
+	}
+}
+
+func TestRestorePendingSelectionPrefersSameFilePath(t *testing.T) {
+	project := "/tmp/project"
+	sessionID := "00000000-0000-0000-0000-000000000001"
+	backupPath := "/tmp/backups/" + sessionID + "/session.jsonl"
+	removedPath := "/tmp/removed/" + sessionID + "/session.jsonl"
+	model := Model{
+		page:               pageSessions,
+		selectedProject:    0,
+		pendingProject:     project,
+		pendingSession:     sessionID,
+		pendingSessionPath: removedPath,
+		pendingColumn:      deletedColumn,
+		columnRows:         newColumnRows(),
+		inventory: domain.Inventory{
+			Projects: []domain.ProjectRecord{{CWD: project}},
+			Sessions: []domain.SessionRecord{
+				{ID: sessionID, CWD: project, FilePath: backupPath, Source: domain.SessionSourceBackup, Status: domain.SessionStatusRecoverable},
+				{ID: sessionID, CWD: project, FilePath: removedPath, Source: domain.SessionSourceRemoved, Status: domain.SessionStatusRemoved},
+			},
+		},
+	}
+
+	model.restorePendingSelection()
+	session, ok := model.currentSession()
+	if !ok || session.FilePath != removedPath {
+		t.Fatalf("expected selected removed path %q, got %+v ok=%v", removedPath, session, ok)
 	}
 }
 
