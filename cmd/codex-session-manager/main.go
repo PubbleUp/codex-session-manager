@@ -66,21 +66,21 @@ func main() {
 		}
 		fmt.Print(app.FormatSessions(inventory.Sessions, fsutil.NormalizePath(cwd)))
 	case "backup":
-		requireArgs(args, 2, "usage: codex-session-manager backup <session-id>")
+		requireArgs(args, 2, "用法：codex-session-manager backup <会话ID>")
 		manifest, err := a.Backup(args[1])
 		if err != nil {
 			exitErr(err)
 		}
-		fmt.Printf("backed up %s\n", manifest.SessionID)
+		fmt.Printf("已备份 %s\n", manifest.SessionID)
 	case "restore":
-		requireArgs(args, 2, "usage: codex-session-manager restore <session-id>")
+		requireArgs(args, 2, "用法：codex-session-manager restore <会话ID>")
 		result, err := a.Restore(args[1])
 		if err != nil {
 			exitErr(err)
 		}
 		fmt.Printf("%s: %s -> %s\n", result.Message, result.SourcePath, result.TargetPath)
 	case "remove":
-		requireArgs(args, 2, "usage: codex-session-manager remove <session-id>")
+		requireArgs(args, 2, "用法：codex-session-manager remove <会话ID>")
 		result, err := a.Remove(args[1])
 		if err != nil {
 			exitErr(err)
@@ -97,19 +97,19 @@ func main() {
 		}
 		fmt.Print(app.FormatRepairReport(report))
 	case "hide-project":
-		requireArgs(args, 2, "usage: codex-session-manager hide-project <project-path>")
+		requireArgs(args, 2, "用法：codex-session-manager hide-project <项目路径>")
 		projectPath := fsutil.NormalizePath(args[1])
 		if err := a.HideProject(projectPath); err != nil {
 			exitErr(err)
 		}
-		fmt.Printf("hidden project %s\n", projectPath)
+		fmt.Printf("已隐藏项目 %s\n", projectPath)
 	case "unhide-project":
-		requireArgs(args, 2, "usage: codex-session-manager unhide-project <project-path>")
+		requireArgs(args, 2, "用法：codex-session-manager unhide-project <项目路径>")
 		projectPath := fsutil.NormalizePath(args[1])
 		if err := a.UnhideProject(projectPath); err != nil {
 			exitErr(err)
 		}
-		fmt.Printf("restored project %s\n", projectPath)
+		fmt.Printf("已恢复项目 %s\n", projectPath)
 	default:
 		printHelp()
 		os.Exit(2)
@@ -124,26 +124,26 @@ func requireArgs(args []string, count int, usage string) {
 }
 
 func printHelp() {
-	fmt.Print(`codex-session-manager manages local Codex CLI sessions.
+	fmt.Print(`codex-session-manager 用于管理本地 Codex CLI 会话。
 
-Usage:
-  codex-session-manager                  Start TUI
-  codex-session-manager projects         List projects
-  codex-session-manager scan             Scan and list projects
-  codex-session-manager list [project]   List sessions
-  codex-session-manager current          List current project sessions
-  codex-session-manager hidden-projects  List hidden projects
-  codex-session-manager hide-project <path>    Hide a project from scans
-  codex-session-manager unhide-project <path>  Restore a hidden project
-  codex-session-manager backup <id>      Backup a session
-  codex-session-manager restore <id>     Restore a backed up session
-  codex-session-manager remove <id>      Move a visible session out of current Codex
-  codex-session-manager repair [project] Restore all recoverable sessions for a project
-  codex-session-manager version          Show version
+用法：
+  codex-session-manager                  启动 TUI
+  codex-session-manager projects         列出项目
+  codex-session-manager scan             扫描并列出项目
+  codex-session-manager list [项目路径]   列出会话
+  codex-session-manager current          列出当前项目会话
+  codex-session-manager hidden-projects  列出隐藏项目
+  codex-session-manager hide-project <项目路径>  从扫描中隐藏项目
+  codex-session-manager unhide-project <项目路径> 恢复隐藏项目
+  codex-session-manager backup <会话ID>   备份会话
+  codex-session-manager restore <会话ID>  恢复会话
+  codex-session-manager remove <会话ID>   从当前 Codex 移出可见会话
+  codex-session-manager repair [项目路径] 恢复项目下所有可恢复会话
+  codex-session-manager version          显示版本号
 `)
 }
 
 func exitErr(err error) {
-	fmt.Fprintln(os.Stderr, "error:", err)
+	fmt.Fprintln(os.Stderr, "错误：", err)
 	os.Exit(1)
 }
