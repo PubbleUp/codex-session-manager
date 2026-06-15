@@ -117,7 +117,7 @@ func ParseSessionFile(path string) (domain.SessionRecord, error) {
 		record.Name = ShortID(record.ID)
 	}
 	if record.ID == "" {
-		return record, errors.New("missing session id")
+		return record, errors.New("缺少会话 ID")
 	}
 	return record, nil
 }
