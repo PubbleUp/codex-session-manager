@@ -23,96 +23,53 @@ type Result struct {
 // PurgeManagedSession 永久删除工具管理的备份或删除区记录。
 func PurgeManagedSession(cfg config.Config, session domain.SessionRecord) (Result, error) {
 	if session.Source != domain.SessionSourceBackup && session.Source != domain.SessionSourceRemoved {
-		return Result{}, fmt.Errorf("session source %s cannot be purged", session.Source)
+		return Result{}, fmt.Errorf("来源为%s的会话不能彻底删除", sourceText(session.Source))
 	}
-	dirs, err := managedSessionDirs(cfg, session)
+	dir, err := managedSessionDir(cfg, session)
 	if err != nil {
 		return Result{}, err
 	}
-	if len(dirs) == 0 {
-		return Result{}, fmt.Errorf("managed session record not found: %s", session.ID)
-	}
-	for _, dir := range dirs {
-		if err := os.RemoveAll(dir); err != nil {
-			return Result{}, err
-		}
+	if err := os.RemoveAll(dir); err != nil {
+		return Result{}, err
 	}
 	return Result{
 		SessionID: session.ID,
-		Source:    strings.Join(dirs, ","),
-		Message:   "purged managed session record",
+		Source:    dir,
+		Message:   "已彻底删除受管会话记录",
 	}, nil
 }
 
-func managedSessionDirs(cfg config.Config, session domain.SessionRecord) ([]string, error) {
+func managedSessionDir(cfg config.Config, session domain.SessionRecord) (string, error) {
 	if session.ID == "" {
-		return nil, fmt.Errorf("missing session id")
+		return "", fmt.Errorf("缺少会话 ID")
 	}
 	if filepath.Base(session.FilePath) != "session.jsonl" {
-		return nil, fmt.Errorf("refuse to purge unexpected file: %s", session.FilePath)
+		return "", fmt.Errorf("拒绝彻底删除非预期文件：%s", session.FilePath)
 	}
 	currentDir := filepath.Dir(session.FilePath)
-	if !inside(currentDir, cfg.BackupDir) && !inside(currentDir, cfg.RemovedDir) {
-		return nil, fmt.Errorf("refuse to purge path outside managed dir: %s", currentDir)
-	}
 
-	seen := map[string]bool{}
-	var dirs []string
-	addDir := func(dir string) error {
-		if dir == "" || seen[dir] {
-			return nil
-		}
-		if !inside(dir, cfg.BackupDir) && !inside(dir, cfg.RemovedDir) {
-			return fmt.Errorf("refuse to purge path outside managed dir: %s", dir)
-		}
-		sessionPath := filepath.Join(dir, "session.jsonl")
-		if !fsutil.FileExists(sessionPath) {
-			return nil
-		}
-		seen[dir] = true
-		dirs = append(dirs, dir)
-		return nil
+	var root string
+	switch session.Source {
+	case domain.SessionSourceBackup:
+		root = cfg.BackupDir
+	case domain.SessionSourceRemoved:
+		root = cfg.RemovedDir
+	default:
+		return "", fmt.Errorf("来源为%s的会话不能彻底删除", sourceText(session.Source))
 	}
-
-	if err := addDir(currentDir); err != nil {
-		return nil, err
+	if !inside(currentDir, root) {
+		return "", fmt.Errorf("拒绝彻底删除受管目录外路径：%s", currentDir)
 	}
-	if err := addDir(filepath.Join(cfg.BackupDir, session.ID)); err != nil {
-		return nil, err
+	if !fsutil.FileExists(filepath.Join(currentDir, "session.jsonl")) {
+		return "", fmt.Errorf("未找到受管会话记录：%s", session.ID)
 	}
-	if err := addRemovedDirs(cfg.RemovedDir, session.ID, addDir); err != nil {
-		return nil, err
-	}
-	return dirs, nil
-}
-
-func addRemovedDirs(root string, sessionID string, addDir func(string) error) error {
-	entries, err := os.ReadDir(root)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name != sessionID && !strings.HasPrefix(name, sessionID+"-") {
-			continue
-		}
-		if err := addDir(filepath.Join(root, name)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return currentDir, nil
 }
 
 // PurgeArchivedSession 永久删除 Codex 归档目录中的 session 文件。
 func PurgeArchivedSession(cfg config.Config, session domain.SessionRecord) (Result, error) {
 	if session.Source != domain.SessionSourceArchived {
-		return Result{}, fmt.Errorf("session source %s cannot be purged as archived", session.Source)
+		return Result{}, fmt.Errorf("来源为%s的会话不能按归档会话彻底删除", sourceText(session.Source))
 	}
 	allowedRoots := []string{filepath.Join(cfg.CodexHome, "archived_sessions")}
 	for _, oldHome := range cfg.OldCodexHomes {
@@ -126,10 +83,10 @@ func PurgeArchivedSession(cfg config.Config, session domain.SessionRecord) (Resu
 		}
 	}
 	if !allowed {
-		return Result{}, fmt.Errorf("refuse to purge archived path outside archived_sessions: %s", session.FilePath)
+		return Result{}, fmt.Errorf("拒绝彻底删除 archived_sessions 外的归档路径：%s", session.FilePath)
 	}
 	if filepath.Base(session.FilePath) == "" || filepath.Ext(session.FilePath) != ".jsonl" {
-		return Result{}, fmt.Errorf("refuse to purge unexpected archived file: %s", session.FilePath)
+		return Result{}, fmt.Errorf("拒绝彻底删除非预期归档文件：%s", session.FilePath)
 	}
 	if err := os.Remove(session.FilePath); err != nil {
 		return Result{}, err
@@ -137,21 +94,38 @@ func PurgeArchivedSession(cfg config.Config, session domain.SessionRecord) (Resu
 	return Result{
 		SessionID: session.ID,
 		Source:    session.FilePath,
-		Message:   "purged archived session",
+		Message:   "已彻底删除归档会话",
 	}, nil
 }
 
 // RemoveFromCurrentCodex 将当前可见 session 移出当前 CODEX_HOME。
 func RemoveFromCurrentCodex(cfg config.Config, session domain.SessionRecord) (Result, error) {
 	if session.Status != domain.SessionStatusVisible {
-		return Result{}, fmt.Errorf("session is not visible in current CODEX_HOME")
+		return Result{}, fmt.Errorf("会话不在当前 CODEX_HOME 的可见列表中")
 	}
 	if cfg.RequireBackupBeforeRemove && !session.IsBackedUp {
 		if _, err := backupsvc.BackupSession(cfg, session); err != nil {
 			return Result{}, err
 		}
 	}
+	return moveSessionToRemoved(cfg, session, "已从当前 Codex 移出", "已从当前 Codex 移出，并复用已有删除区副本")
+}
 
+// MoveInvisibleSessionToRemoved 将当前选中的不可见会话移入删除区。
+func MoveInvisibleSessionToRemoved(cfg config.Config, session domain.SessionRecord) (Result, error) {
+	if session.Source != domain.SessionSourceInactive && session.Source != domain.SessionSourceOldHome {
+		return Result{}, fmt.Errorf("来源为%s的会话不能按不可见会话删除", sourceText(session.Source))
+	}
+	return moveSessionToRemoved(cfg, session, "已从不可见列表移入删除区", "已从不可见列表删除，并复用已有删除区副本")
+}
+
+func moveSessionToRemoved(cfg config.Config, session domain.SessionRecord, movedMessage string, reusedMessage string) (Result, error) {
+	if session.ID == "" {
+		return Result{}, fmt.Errorf("缺少会话 ID")
+	}
+	if !fsutil.FileExists(session.FilePath) {
+		return Result{}, fmt.Errorf("会话文件不存在：%s", session.FilePath)
+	}
 	targetDir := filepath.Join(cfg.RemovedDir, session.ID)
 	targetPath := filepath.Join(targetDir, "session.jsonl")
 	sha, err := fsutil.SHA256File(session.FilePath)
@@ -175,7 +149,7 @@ func RemoveFromCurrentCodex(cfg config.Config, session domain.SessionRecord) (Re
 				SessionID: session.ID,
 				Source:    session.FilePath,
 				Target:    targetPath,
-				Message:   "removed from current Codex; existing removed copy reused",
+				Message:   reusedMessage,
 			}, nil
 		}
 		if !cfg.AllowOverwrite {
@@ -193,7 +167,7 @@ func RemoveFromCurrentCodex(cfg config.Config, session domain.SessionRecord) (Re
 		return Result{}, err
 	}
 	if targetSHA != sha {
-		return Result{}, fmt.Errorf("removed hash mismatch")
+		return Result{}, fmt.Errorf("移出后哈希校验失败")
 	}
 
 	if err := writeRemovedManifest(targetDir, session, sha); err != nil {
@@ -204,7 +178,7 @@ func RemoveFromCurrentCodex(cfg config.Config, session domain.SessionRecord) (Re
 		SessionID: session.ID,
 		Source:    session.FilePath,
 		Target:    targetPath,
-		Message:   "removed from current Codex",
+		Message:   movedMessage,
 	}, nil
 }
 
@@ -233,4 +207,23 @@ func inside(path string, root string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+func sourceText(source domain.SessionSource) string {
+	switch source {
+	case domain.SessionSourceVisible:
+		return "当前可见列表"
+	case domain.SessionSourceInactive:
+		return "不可见列表"
+	case domain.SessionSourceArchived:
+		return "归档目录"
+	case domain.SessionSourceBackup:
+		return "工具备份"
+	case domain.SessionSourceOldHome:
+		return "旧 CODEX_HOME"
+	case domain.SessionSourceRemoved:
+		return "工具删除区"
+	default:
+		return string(source)
+	}
 }

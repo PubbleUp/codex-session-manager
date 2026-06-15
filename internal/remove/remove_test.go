@@ -143,7 +143,7 @@ func TestRemoveStillBackupsWhenRequired(t *testing.T) {
 	}
 }
 
-func TestPurgeManagedSessionRemovesBackupDir(t *testing.T) {
+func TestPurgeManagedSessionRemovesOnlySelectedBackupDir(t *testing.T) {
 	root := t.TempDir()
 	sessionID := "019ebb10-7a0e-7d70-95e8-c020b75687d8"
 	backupDir := filepath.Join(root, "tool", "backups")
@@ -178,12 +178,12 @@ func TestPurgeManagedSessionRemovesBackupDir(t *testing.T) {
 	if _, err := os.Stat(sessionDir); !os.IsNotExist(err) {
 		t.Fatalf("expected backup dir purged, stat err=%v", err)
 	}
-	if _, err := os.Stat(removedSessionDir); !os.IsNotExist(err) {
-		t.Fatalf("expected removed dir purged, stat err=%v", err)
+	if _, err := os.Stat(removedSessionDir); err != nil {
+		t.Fatalf("expected removed dir kept, stat err=%v", err)
 	}
 }
 
-func TestPurgeManagedSessionRemovesVersionedRemovedDirs(t *testing.T) {
+func TestPurgeManagedSessionRemovesOnlySelectedRemovedDir(t *testing.T) {
 	root := t.TempDir()
 	sessionID := "019ebb10-7a0e-7d70-95e8-c020b75687d8"
 	backupDir := filepath.Join(root, "tool", "backups")
@@ -209,10 +209,11 @@ func TestPurgeManagedSessionRemovesVersionedRemovedDirs(t *testing.T) {
 	if _, err := PurgeManagedSession(cfg, session); err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{removedSessionDir, versionedRemovedSessionDir} {
-		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Fatalf("expected removed dir purged: %s, stat err=%v", dir, err)
-		}
+	if _, err := os.Stat(removedSessionDir); !os.IsNotExist(err) {
+		t.Fatalf("expected selected removed dir purged, stat err=%v", err)
+	}
+	if _, err := os.Stat(versionedRemovedSessionDir); err != nil {
+		t.Fatalf("expected versioned removed dir kept, stat err=%v", err)
 	}
 }
 
@@ -239,6 +240,28 @@ func TestPurgeManagedSessionRejectsPathOutsideManagedDir(t *testing.T) {
 	}
 	if _, err := PurgeManagedSession(cfg, session); err == nil {
 		t.Fatal("expected outside path purge rejected")
+	}
+}
+
+func TestPurgeManagedSessionRejectsSourceDirectoryMismatch(t *testing.T) {
+	root := t.TempDir()
+	sessionID := "019ebb10-7a0e-7d70-95e8-c020b75687d8"
+	cfg := config.Config{BackupDir: filepath.Join(root, "tool", "backups"), RemovedDir: filepath.Join(root, "tool", "removed")}
+	sessionPath := filepath.Join(cfg.RemovedDir, sessionID, "session.jsonl")
+	if err := os.MkdirAll(filepath.Dir(sessionPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sessionPath, []byte("removed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session := domain.SessionRecord{
+		ID:       sessionID,
+		FilePath: sessionPath,
+		Source:   domain.SessionSourceBackup,
+	}
+
+	if _, err := PurgeManagedSession(cfg, session); err == nil {
+		t.Fatal("expected source directory mismatch rejected")
 	}
 }
 
