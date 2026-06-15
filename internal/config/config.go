@@ -15,6 +15,7 @@ type Config struct {
 	ToolHome                  string
 	BackupDir                 string
 	RemovedDir                string
+	ModelProvider             string
 	OldCodexHomes             []string
 	HiddenProjects            []string
 	IncludeArchived           bool
@@ -49,6 +50,7 @@ func Load() (Config, error) {
 	path := filepath.Join(cfg.ToolHome, "config.toml")
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
+		cfg.ModelProvider = readCodexModelProvider(filepath.Join(cfg.CodexHome, "config.toml"))
 		return cfg, nil
 	}
 	if err != nil {
@@ -56,6 +58,7 @@ func Load() (Config, error) {
 	}
 	defer file.Close()
 
+	modelProviderSet := false
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -85,6 +88,9 @@ func Load() (Config, error) {
 			if value != "" {
 				cfg.RemovedDir = fsutil.NormalizePath(value)
 			}
+		case "model_provider":
+			cfg.ModelProvider = value
+			modelProviderSet = true
 		case "old_codex_homes":
 			cfg.OldCodexHomes = parseStringArray(value)
 		case "hidden_projects":
@@ -106,7 +112,32 @@ func Load() (Config, error) {
 	if err := scanner.Err(); err != nil {
 		return cfg, err
 	}
+	if !modelProviderSet {
+		cfg.ModelProvider = readCodexModelProvider(filepath.Join(cfg.CodexHome, "config.toml"))
+	}
 	return cfg, nil
+}
+
+func readCodexModelProvider(path string) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "model_provider" {
+			continue
+		}
+		return strings.Trim(strings.TrimSpace(value), `"`)
+	}
+	return ""
 }
 
 func ConfigPath(cfg Config) string {
@@ -146,7 +177,7 @@ func UnhideProject(cfg Config, projectPath string) error {
 func Ensure(cfg Config) error {
 	for _, dir := range []string{cfg.ToolHome, cfg.BackupDir, cfg.RemovedDir, filepath.Join(cfg.ToolHome, "logs")} {
 		if err := fsutil.EnsurePrivateDir(dir); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
+			return fmt.Errorf("创建目录失败：%s：%w", dir, err)
 		}
 	}
 	return nil
