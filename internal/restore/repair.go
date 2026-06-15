@@ -56,14 +56,14 @@ func BuildRepairPlan(cfg config.Config, inventory domain.Inventory, projectPath 
 	plan := RepairPlan{ProjectPath: normalizedProject}
 	for _, session := range candidates {
 		if visible[session.ID] {
-			plan.Items = append(plan.Items, RepairPlanItem{Session: session, Action: "skip", Reason: "already visible"})
+			plan.Items = append(plan.Items, RepairPlanItem{Session: session, Action: "skip", Reason: "已在当前可见列表中"})
 			continue
 		}
 		if session.Status == domain.SessionStatusConflict {
 			plan.Items = append(plan.Items, RepairPlanItem{Session: session, Action: "conflict", Reason: session.ConflictReason})
 			continue
 		}
-		plan.Items = append(plan.Items, RepairPlanItem{Session: session, Action: "restore", Reason: string(session.Source)})
+		plan.Items = append(plan.Items, RepairPlanItem{Session: session, Action: "restore", Reason: recoverableReason(session.Source)})
 	}
 	return plan
 }
@@ -79,7 +79,7 @@ func ExecuteRepair(cfg config.Config, plan RepairPlan) RepairReport {
 		case "restore":
 			result, err := RestoreSession(cfg, item.Session)
 			if err != nil {
-				report.Failed = append(report.Failed, fmt.Sprintf("%s: %v", item.Session.ID, err))
+				report.Failed = append(report.Failed, fmt.Sprintf("%s：%v", item.Session.ID, err))
 				continue
 			}
 			report.Restored = append(report.Restored, result)
@@ -90,10 +90,27 @@ func ExecuteRepair(cfg config.Config, plan RepairPlan) RepairReport {
 
 func isRecoverable(session domain.SessionRecord) bool {
 	switch session.Source {
-	case domain.SessionSourceBackup, domain.SessionSourceRemoved, domain.SessionSourceOldHome, domain.SessionSourceArchived:
+	case domain.SessionSourceBackup, domain.SessionSourceRemoved, domain.SessionSourceOldHome, domain.SessionSourceArchived, domain.SessionSourceInactive:
 		return true
 	default:
 		return false
+	}
+}
+
+func recoverableReason(source domain.SessionSource) string {
+	switch source {
+	case domain.SessionSourceBackup:
+		return "工具备份"
+	case domain.SessionSourceRemoved:
+		return "工具删除区"
+	case domain.SessionSourceArchived:
+		return "归档目录"
+	case domain.SessionSourceOldHome:
+		return "旧 CODEX_HOME"
+	case domain.SessionSourceInactive:
+		return "当前 CLI 不可见"
+	default:
+		return string(source)
 	}
 }
 
@@ -107,6 +124,8 @@ func sourceRank(source domain.SessionSource) int {
 		return 3
 	case domain.SessionSourceOldHome:
 		return 4
+	case domain.SessionSourceInactive:
+		return 5
 	default:
 		return 99
 	}

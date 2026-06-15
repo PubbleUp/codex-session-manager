@@ -9,6 +9,7 @@ import (
 	"github.com/sunlock/codex-session-manager/internal/config"
 	"github.com/sunlock/codex-session-manager/internal/domain"
 	"github.com/sunlock/codex-session-manager/internal/fsutil"
+	removesvc "github.com/sunlock/codex-session-manager/internal/remove"
 )
 
 type Result struct {
@@ -23,10 +24,10 @@ type Result struct {
 // RestoreSession 将一个可恢复 session 恢复到当前 CODEX_HOME/sessions。
 func RestoreSession(cfg config.Config, session domain.SessionRecord) (Result, error) {
 	if session.ID == "" {
-		return Result{}, fmt.Errorf("missing session id")
+		return Result{}, fmt.Errorf("缺少会话 ID")
 	}
 	if !fsutil.FileExists(session.FilePath) {
-		return Result{}, fmt.Errorf("source file not found: %s", session.FilePath)
+		return Result{}, fmt.Errorf("源会话文件不存在：%s", session.FilePath)
 	}
 
 	sha, err := fsutil.SHA256File(session.FilePath)
@@ -34,7 +35,7 @@ func RestoreSession(cfg config.Config, session domain.SessionRecord) (Result, er
 		return Result{}, err
 	}
 	if session.SHA256 != "" && session.SHA256 != sha {
-		return Result{}, fmt.Errorf("source hash mismatch for %s", session.ID)
+		return Result{}, fmt.Errorf("源文件哈希不匹配：%s", session.ID)
 	}
 	session.SHA256 = sha
 
@@ -59,12 +60,22 @@ func RestoreSession(cfg config.Config, session domain.SessionRecord) (Result, er
 			return result, err
 		}
 		if targetSHA == sha {
-			result.Message = "already visible"
+			if err := codex.RegisterThread(cfg, session, targetPath); err != nil {
+				return result, err
+			}
+			result.Changed = session.Source == domain.SessionSourceInactive || isManagedRestoreSource(session)
+			result.Message = "已注册到当前 Codex"
+			if err := purgeRestoredManagedSource(cfg, session); err != nil {
+				return result, fmt.Errorf("已恢复，但清理删除列表源记录失败：%w", err)
+			}
+			if isManagedRestoreSource(session) {
+				result.Message = "已注册到当前 Codex，并从删除列表移除"
+			}
 			return result, nil
 		}
 		if !cfg.AllowOverwrite {
-			result.Message = "target exists with different content"
-			return result, fmt.Errorf("restore conflict: %s", targetPath)
+			result.Message = "目标文件已存在且内容不同"
+			return result, fmt.Errorf("恢复冲突，目标文件已存在且内容不同：%s", targetPath)
 		}
 	}
 
@@ -76,10 +87,19 @@ func RestoreSession(cfg config.Config, session domain.SessionRecord) (Result, er
 		return result, err
 	}
 	if targetSHA != sha {
-		return result, fmt.Errorf("restore hash mismatch")
+		return result, fmt.Errorf("恢复后哈希校验失败")
+	}
+	if err := codex.RegisterThread(cfg, session, targetPath); err != nil {
+		return result, err
 	}
 	result.Changed = true
-	result.Message = "restored"
+	result.Message = "已恢复"
+	if err := purgeRestoredManagedSource(cfg, session); err != nil {
+		return result, fmt.Errorf("已恢复，但清理删除列表源记录失败：%w", err)
+	}
+	if isManagedRestoreSource(session) {
+		result.Message = "已恢复，并从删除列表移除"
+	}
 	return result, nil
 }
 
@@ -116,4 +136,21 @@ func inside(path string, dir string) bool {
 
 func startsWithParent(rel string) bool {
 	return len(rel) >= 3 && rel[:3] == ".."+string(filepath.Separator)
+}
+
+func purgeRestoredManagedSource(cfg config.Config, session domain.SessionRecord) error {
+	if !isManagedRestoreSource(session) {
+		return nil
+	}
+	_, err := removesvc.PurgeManagedSession(cfg, session)
+	return err
+}
+
+func isManagedRestoreSource(session domain.SessionRecord) bool {
+	switch session.Source {
+	case domain.SessionSourceBackup, domain.SessionSourceRemoved:
+		return true
+	default:
+		return false
+	}
 }
