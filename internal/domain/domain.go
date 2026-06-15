@@ -6,6 +6,7 @@ type SessionSource string
 
 const (
 	SessionSourceVisible  SessionSource = "visible"
+	SessionSourceInactive SessionSource = "inactive"
 	SessionSourceArchived SessionSource = "archived"
 	SessionSourceBackup   SessionSource = "backup"
 	SessionSourceOldHome  SessionSource = "old_home"
@@ -16,6 +17,7 @@ type SessionStatus string
 
 const (
 	SessionStatusVisible     SessionStatus = "visible"
+	SessionStatusInactive    SessionStatus = "inactive"
 	SessionStatusArchived    SessionStatus = "archived"
 	SessionStatusRecoverable SessionStatus = "recoverable"
 	SessionStatusBackedUp    SessionStatus = "backed_up"
