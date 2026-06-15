@@ -6,10 +6,11 @@
 
 - 扫描 `$CODEX_HOME/sessions`，按 session 记录中的项目 `cwd` 聚合展示。
 - 查看项目、session 状态、来源、名称、更新时间和所属目录。
+- 基于 Codex `state_5.sqlite` 活跃线程索引判定当前 CLI 真正可见的 session。
 - 将可见 session 备份到工具管理目录。
 - 将当前 Codex 中的可见 session 移出，避免列表过载。
 - 从备份、移出目录或旧 Codex 目录恢复 session。
-- 一键修复指定项目，将可恢复 session 重新放回当前 Codex。
+- 一键修复指定项目，将可恢复 session 重新放回当前 Codex，并注册到当前 CLI 活跃线程索引。
 - 支持隐藏不想展示的项目，并可随时恢复。
 - 记录操作审计日志，便于排查备份、恢复、移出等动作。
 
@@ -32,7 +33,7 @@ bin/                         本地构建产物
 
 ## 环境要求
 
-- Go 1.24 或更高版本。
+- Go 1.25 或更高版本。
 - 已安装并使用过 Codex CLI。
 - 默认读取 `$CODEX_HOME`；如果未设置，则使用 `~/.codex`。
 
@@ -142,6 +143,13 @@ session 页和详情页：
 - `Esc`：返回项目页。
 - `q`：退出。
 
+列含义：
+
+- `可见`：当前 Codex CLI 活跃线程索引中可 resume 的 session。
+- `不可见`：旧 `CODEX_HOME`，或仍在当前 `sessions` 目录但不属于当前账号、baseURL 或 CLI 上下文的 session；执行恢复或一键加载后会注册到当前账号/provider 的可见列表。
+- `归档`：Codex 归档目录中的 session。
+- `删除`：工具备份区、移出区或冲突记录。
+
 隐藏项目页：
 
 - `Enter` 或 `Ctrl+U`：恢复当前隐藏项目。
@@ -166,6 +174,7 @@ session 页和详情页：
 
 ```toml
 codex_home = "/Users/me/.codex"
+model_provider = "codex_local_access"
 backup_dir = "/Users/me/.codex-session-manager/backups"
 removed_dir = "/Users/me/.codex-session-manager/removed"
 old_codex_homes = ["/Users/me/.codex-old"]
@@ -185,6 +194,8 @@ preview_content = false
 - 移出目录：`~/.codex-session-manager/removed`
 - 审计日志：`~/.codex-session-manager/logs/audit.jsonl`
 
+默认会从 Codex 的 `config.toml` 读取当前 `model_provider`，用于区分不同账号、baseURL 或 provider 下的可见 session；工具配置中的 `model_provider` 可覆盖该值。
+
 ## 安全边界
 
 工具不读取、不备份、不修改 Codex 的 `auth.json`。`remove` 默认会在移出前自动补齐备份，并把 session 移入工具管理目录，而不是直接永久删除。所有备份、移出、恢复、隐藏项目和修复操作都会写入审计日志。
@@ -203,7 +214,7 @@ go build -o bin/codex-session-manager ./cmd/codex-session-manager
 发布构建时可覆盖内置版本号：
 
 ```bash
-go build -ldflags "-X github.com/sunlock/codex-session-manager/internal/version.Version=0.1.0" -o bin/codex-session-manager ./cmd/codex-session-manager
+go build -ldflags "-X github.com/sunlock/codex-session-manager/internal/version.Version=0.1.1" -o bin/codex-session-manager ./cmd/codex-session-manager
 ```
 
 测试文件与实现文件放在同一 package 下，命名为 `*_test.go`。涉及文件操作的测试应使用临时目录，避免触碰真实 `$CODEX_HOME`。
