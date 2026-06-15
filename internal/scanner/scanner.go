@@ -24,6 +24,7 @@ func Scan(cfg config.Config) (domain.Inventory, error) {
 	sessions := make([]domain.SessionRecord, 0, len(paths))
 	backupIDs := readBackupIDs(cfg.BackupDir)
 	indexNames := readSessionIndex(cfg)
+	threadIndex := codex.ReadThreadIndex(cfg)
 	hiddenProjects := hiddenProjectSet(cfg.HiddenProjects)
 	hashByID := map[string]string{}
 
@@ -40,6 +41,7 @@ func Scan(cfg config.Config) (domain.Inventory, error) {
 			cfg.RemovedDir,
 			cfg.OldCodexHomes,
 		)
+		applyThreadVisibility(&record, threadIndex)
 		record.CWD = fsutil.NormalizePath(record.CWD)
 		if hiddenProjects[record.CWD] {
 			continue
@@ -58,7 +60,7 @@ func Scan(cfg config.Config) (domain.Inventory, error) {
 		}
 		if previous, ok := hashByID[record.ID]; ok && previous != "" && record.SHA256 != "" && previous != record.SHA256 {
 			record.Status = domain.SessionStatusConflict
-			record.ConflictReason = "same session id has different content"
+			record.ConflictReason = "相同会话 ID 存在不同内容"
 		}
 		if record.SHA256 != "" {
 			hashByID[record.ID] = record.SHA256
@@ -75,6 +77,18 @@ func Scan(cfg config.Config) (domain.Inventory, error) {
 	})
 
 	return domain.Inventory{Projects: projects, Sessions: sessions}, nil
+}
+
+func applyThreadVisibility(record *domain.SessionRecord, threadIndex codex.ThreadIndex) {
+	if record.Source != domain.SessionSourceVisible {
+		return
+	}
+	if threadIndex.IsActive(record.ID, record.FilePath) {
+		return
+	}
+	record.Source = domain.SessionSourceInactive
+	record.Status = domain.SessionStatusInactive
+	record.IsCurrentHome = false
 }
 
 func hiddenProjectSet(projects []string) map[string]bool {
@@ -153,7 +167,7 @@ func aggregateProjects(sessions []domain.SessionRecord) []domain.ProjectRecord {
 		if session.Status == domain.SessionStatusVisible {
 			project.VisibleCount++
 		}
-		if session.Status == domain.SessionStatusRecoverable || session.Status == domain.SessionStatusRemoved || session.Status == domain.SessionStatusArchived {
+		if session.Status == domain.SessionStatusRecoverable || session.Status == domain.SessionStatusRemoved || session.Status == domain.SessionStatusArchived || session.Status == domain.SessionStatusInactive {
 			project.RecoverableCount++
 		}
 		if session.IsBackedUp || session.Source == domain.SessionSourceBackup {
