@@ -43,6 +43,37 @@ func main() {
 			exitErr(err)
 		}
 		fmt.Print(app.FormatProjects(inventory.Projects))
+	case "claude-projects":
+		inventory, err := a.ScanClaude()
+		if err != nil {
+			exitErr(err)
+		}
+		fmt.Print(app.FormatProjects(inventory.Projects))
+	case "claude-list":
+		inventory, err := a.ScanClaude()
+		if err != nil {
+			exitErr(err)
+		}
+		projectPath := ""
+		if len(args) > 1 {
+			projectPath = fsutil.NormalizePath(args[1])
+		}
+		fmt.Print(app.FormatSessions(inventory.Sessions, projectPath))
+	case "claude-delete":
+		requireArgs(args, 2, "用法：codex-session-manager claude-delete <会话ID>")
+		inventory, err := a.ScanClaude()
+		if err != nil {
+			exitErr(err)
+		}
+		session, ok := app.FindSession(inventory.Sessions, args[1])
+		if !ok {
+			exitErr(fmt.Errorf("未找到 Claude Code 会话：%s", args[1]))
+		}
+		result, err := a.DeleteClaudeSession(session)
+		if err != nil {
+			exitErr(err)
+		}
+		fmt.Printf("已删除 %s（%d 个路径）\n", result.SessionID, result.Deleted)
 	case "hidden-projects":
 		fmt.Print(app.FormatHiddenProjects(a.Config.HiddenProjects))
 	case "list":
@@ -124,7 +155,7 @@ func requireArgs(args []string, count int, usage string) {
 }
 
 func printHelp() {
-	fmt.Print(`codex-session-manager 用于管理本地 Codex CLI 会话。
+	fmt.Print(`codex-session-manager 用于管理本地 Codex CLI 和 Claude Code 会话。
 
 用法：
   codex-session-manager                  启动 TUI
@@ -139,6 +170,9 @@ func printHelp() {
   codex-session-manager restore <会话ID>  恢复会话
   codex-session-manager remove <会话ID>   从当前 Codex 移出可见会话
   codex-session-manager repair [项目路径] 恢复项目下所有可恢复会话
+	  codex-session-manager claude-projects  列出 Claude Code 项目
+	  codex-session-manager claude-list [项目路径] 列出 Claude Code 会话
+	  codex-session-manager claude-delete <会话ID> 删除 Claude Code 会话
   codex-session-manager version          显示版本号
 `)
 }

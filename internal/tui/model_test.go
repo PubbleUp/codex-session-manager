@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -311,6 +313,186 @@ func TestUnhideProjectMsgReturnsToProjectsAndSelectsRestoredProject(t *testing.T
 	got := updated.(Model)
 	if got.page != pageProjects || len(got.app.Config.HiddenProjects) != 0 || got.pendingProject != "/tmp/zeta" {
 		t.Fatalf("unexpected unhide state: page=%d hidden=%v pending=%q", got.page, got.app.Config.HiddenProjects, got.pendingProject)
+	}
+}
+
+func TestTabSwitchesBetweenCodexAndClaudeInventories(t *testing.T) {
+	codexInventory := domain.Inventory{Projects: []domain.ProjectRecord{{CWD: "/tmp/codex"}}}
+	claudeInventory := domain.Inventory{Projects: []domain.ProjectRecord{{CWD: "/tmp/claude"}}}
+	model := Model{
+		provider:        providerCodex,
+		page:            pageSessions,
+		inventory:       codexInventory,
+		codexInventory:  codexInventory,
+		claudeInventory: claudeInventory,
+		columnRows:      newColumnRows(),
+	}
+
+	updated, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got := updated.(Model)
+	if got.provider != providerClaude || got.page != pageProjects || got.inventory.Projects[0].CWD != "/tmp/claude" {
+		t.Fatalf("unexpected Claude tab state: provider=%d page=%d inventory=%+v", got.provider, got.page, got.inventory)
+	}
+
+	updated, _ = got.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.provider != providerCodex || got.inventory.Projects[0].CWD != "/tmp/codex" {
+		t.Fatalf("unexpected Codex tab state: provider=%d inventory=%+v", got.provider, got.inventory)
+	}
+}
+
+func TestClaudeModeUsesSingleSessionColumn(t *testing.T) {
+	model := Model{provider: providerClaude, width: 80}
+	columns := model.sessionColumns([]domain.SessionRecord{{
+		ID:     "11111111-1111-1111-1111-111111111111",
+		Name:   "Claude session",
+		Source: domain.SessionSourceVisible,
+		Status: domain.SessionStatusVisible,
+	}})
+	if len(columns) != 1 || !strings.Contains(columns[0], "本地会话") {
+		t.Fatalf("expected one Claude session column, got %v", columns)
+	}
+}
+
+func TestClaudeDeleteKeyDeletesSessionWithoutBackup(t *testing.T) {
+	root := t.TempDir()
+	project := "/tmp/claude-project"
+	id := "11111111-1111-1111-1111-111111111111"
+	projectDir := filepath.Join(root, "claude", "projects", "-tmp-claude-project")
+	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(projectDir, id+".jsonl")
+	if err := os.WriteFile(transcript, []byte(`{"type":"user","sessionId":"`+id+`","cwd":"`+project+`","message":{"content":"测试删除"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "claude", "history.jsonl"), []byte(`{"display":"测试删除","project":"`+project+`","sessionId":"`+id+`"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model := Model{
+		app: app.App{Config: config.Config{
+			ClaudeHome: filepath.Join(root, "claude"),
+			ToolHome:   filepath.Join(root, "tool"),
+		}},
+		provider:        providerClaude,
+		page:            pageSessions,
+		selectedProject: 0,
+		selectedColumn:  visibleColumn,
+		columnRows:      newColumnRows(),
+		inventory: domain.Inventory{
+			Projects: []domain.ProjectRecord{{CWD: project}},
+			Sessions: []domain.SessionRecord{{
+				ID:       id,
+				Name:     "测试删除",
+				CWD:      project,
+				FilePath: transcript,
+				Source:   domain.SessionSourceVisible,
+				Status:   domain.SessionStatusVisible,
+			}},
+		},
+	}
+
+	updated, cmd := model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	if cmd == nil {
+		t.Fatal("expected Claude delete command")
+	}
+	msg := cmd()
+	action, ok := msg.(actionMsg)
+	if !ok || action.err != nil || !strings.Contains(action.message, "已删除") {
+		t.Fatalf("unexpected delete result: %#v", msg)
+	}
+	if _, err := os.Stat(transcript); !os.IsNotExist(err) {
+		t.Fatalf("expected transcript deleted, err=%v", err)
+	}
+	if updated.(Model).provider != providerClaude {
+		t.Fatal("expected model to remain in Claude mode")
+	}
+	if _, err := os.Stat(filepath.Join(root, "backups")); !os.IsNotExist(err) {
+		t.Fatalf("expected no backup directory, err=%v", err)
+	}
+}
+
+func TestEscFromDetailReturnsToSessionList(t *testing.T) {
+	for _, currentProvider := range []provider{providerCodex, providerClaude} {
+		model := Model{
+			provider:        currentProvider,
+			page:            pageDetail,
+			selectedProject: 0,
+			selectedColumn:  visibleColumn,
+			columnRows:      newColumnRows(),
+			inventory: domain.Inventory{
+				Projects: []domain.ProjectRecord{{CWD: "/tmp/project"}},
+				Sessions: []domain.SessionRecord{{
+					ID:     "11111111-1111-1111-1111-111111111111",
+					CWD:    "/tmp/project",
+					Source: domain.SessionSourceVisible,
+					Status: domain.SessionStatusVisible,
+				}},
+			},
+		}
+
+		updated, _ := model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+		got := updated.(Model)
+		if got.page != pageSessions {
+			t.Fatalf("provider %d: expected sessions page, got %d", currentProvider, got.page)
+		}
+	}
+}
+
+func TestDeleteLastProjectSessionReturnsToProjectList(t *testing.T) {
+	model := Model{
+		provider:       providerClaude,
+		page:           pageSessions,
+		pendingProject: "/tmp/deleted-project",
+		inventory: domain.Inventory{
+			Projects: []domain.ProjectRecord{{CWD: "/tmp/deleted-project"}, {CWD: "/tmp/next-project"}},
+		},
+		columnRows: newColumnRows(),
+	}
+
+	updated, _ := model.Update(actionMsg{
+		forgetSession:                   true,
+		returnToProjectsIfProjectAbsent: true,
+	})
+	model = updated.(Model)
+	updated, _ = model.Update(scanMsg{
+		provider: providerClaude,
+		inventory: domain.Inventory{
+			Projects: []domain.ProjectRecord{{CWD: "/tmp/next-project"}},
+		},
+	})
+	got := updated.(Model)
+	if got.page != pageProjects {
+		t.Fatalf("expected projects page after deleting project's last session, got %d", got.page)
+	}
+}
+
+func TestDeleteSessionStaysOnProjectWhenSessionsRemain(t *testing.T) {
+	model := Model{
+		provider:       providerClaude,
+		page:           pageSessions,
+		pendingProject: "/tmp/project",
+		inventory: domain.Inventory{
+			Projects: []domain.ProjectRecord{{CWD: "/tmp/project"}},
+		},
+		columnRows: newColumnRows(),
+	}
+
+	updated, _ := model.Update(actionMsg{
+		forgetSession:                   true,
+		returnToProjectsIfProjectAbsent: true,
+	})
+	model = updated.(Model)
+	updated, _ = model.Update(scanMsg{
+		provider: providerClaude,
+		inventory: domain.Inventory{
+			Projects: []domain.ProjectRecord{{CWD: "/tmp/project"}},
+			Sessions: []domain.SessionRecord{{CWD: "/tmp/project"}},
+		},
+	})
+	got := updated.(Model)
+	if got.page != pageSessions {
+		t.Fatalf("expected sessions page while project still has sessions, got %d", got.page)
 	}
 }
 

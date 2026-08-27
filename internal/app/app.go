@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	backupsvc "github.com/sunlock/codex-session-manager/internal/backup"
+	claudesvc "github.com/sunlock/codex-session-manager/internal/claude"
 	"github.com/sunlock/codex-session-manager/internal/codex"
 	"github.com/sunlock/codex-session-manager/internal/config"
 	"github.com/sunlock/codex-session-manager/internal/domain"
@@ -32,6 +33,20 @@ func New() (App, error) {
 
 func (a App) Scan() (domain.Inventory, error) {
 	return scanner.Scan(a.Config)
+}
+
+func (a App) ScanClaude() (domain.Inventory, error) {
+	return claudesvc.Scan(a.Config)
+}
+
+func (a App) DeleteClaudeSession(session domain.SessionRecord) (claudesvc.DeleteResult, error) {
+	result, err := claudesvc.DeleteSession(a.Config, session)
+	if err != nil {
+		_ = a.Audit("claude-delete", session.ID, session.FilePath, "", "失败", err.Error())
+		return result, err
+	}
+	_ = a.Audit("claude-delete", session.ID, session.FilePath, "", "成功", "")
+	return result, nil
 }
 
 func (a App) HideProject(projectPath string) error {

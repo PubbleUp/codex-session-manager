@@ -15,6 +15,8 @@ import (
 
 type page int
 
+type provider int
+
 const (
 	pageProjects page = iota
 	pageSessions
@@ -22,15 +24,22 @@ const (
 	pageHiddenProjects
 )
 
+const (
+	providerCodex provider = iota
+	providerClaude
+)
+
 type scanMsg struct {
+	provider  provider
 	inventory domain.Inventory
 	err       error
 }
 
 type actionMsg struct {
-	message       string
-	forgetSession bool
-	err           error
+	message                         string
+	forgetSession                   bool
+	returnToProjectsIfProjectAbsent bool
+	err                             error
 }
 
 type renameMsg struct {
@@ -52,29 +61,33 @@ type unhideProjectMsg struct {
 }
 
 type Model struct {
-	app                   app.App
-	page                  page
-	inventory             domain.Inventory
-	selectedProject       int
-	selectedHiddenProject int
-	selectedColumn        int
-	selectedRow           int
-	columnRows            []int
-	pendingProject        string
-	pendingSession        string
-	pendingSessionPath    string
-	pendingColumn         int
-	pendingRow            int
-	renaming              bool
-	renameInput           string
-	renameSession         domain.SessionRecord
-	projectFilter         string
-	pendingProjectRow     int
-	pendingProjectRowSet  bool
-	status                string
-	err                   error
-	width                 int
-	height                int
+	app                             app.App
+	provider                        provider
+	page                            page
+	inventory                       domain.Inventory
+	codexInventory                  domain.Inventory
+	claudeInventory                 domain.Inventory
+	selectedProject                 int
+	selectedHiddenProject           int
+	selectedColumn                  int
+	selectedRow                     int
+	columnRows                      []int
+	pendingProject                  string
+	pendingSession                  string
+	pendingSessionPath              string
+	pendingColumn                   int
+	pendingRow                      int
+	renaming                        bool
+	renameInput                     string
+	renameSession                   domain.SessionRecord
+	projectFilter                   string
+	returnToProjectsIfProjectAbsent bool
+	pendingProjectRow               int
+	pendingProjectRowSet            bool
+	status                          string
+	err                             error
+	width                           int
+	height                          int
 }
 
 var (
@@ -100,14 +113,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case scanMsg:
+		if msg.provider != m.provider {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = "扫描失败"
 			return m, nil
 		}
 		m.inventory = msg.inventory
+		if m.provider == providerClaude {
+			m.claudeInventory = msg.inventory
+		} else {
+			m.codexInventory = msg.inventory
+		}
 		m.err = nil
 		m.status = fmt.Sprintf("已加载 %d 个项目，%d 个会话", len(msg.inventory.Projects), len(msg.inventory.Sessions))
+		if m.returnToProjectsIfProjectAbsent && !inventoryHasProject(msg.inventory, m.pendingProject) {
+			m.page = pageProjects
+			m.pendingProject = ""
+			m.pendingSession = ""
+			m.pendingSessionPath = ""
+			m.returnToProjectsIfProjectAbsent = false
+			m.resetSessionSelection()
+			m.clampSelection()
+			return m, nil
+		}
+		m.returnToProjectsIfProjectAbsent = false
 		m.restorePendingSelection()
 		m.clampSelection()
 	case actionMsg:
@@ -122,6 +154,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingSession = ""
 			m.pendingSessionPath = ""
 		}
+		m.returnToProjectsIfProjectAbsent = msg.returnToProjectsIfProjectAbsent
 		return m, m.scanCmd()
 	case renameMsg:
 		if msg.err != nil {
@@ -183,6 +216,7 @@ func (m Model) View() string {
 	case pageHiddenProjects:
 		body = m.viewHiddenProjects()
 	}
+	body = lipgloss.JoinVertical(lipgloss.Left, m.viewProviderTabs(), "", body)
 	status := m.status
 	if m.err != nil {
 		status = errorStyle.Render(m.err.Error())
@@ -201,6 +235,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.renaming {
 		return m.handleRenameKey(msg)
 	}
+	if msg.String() == "tab" {
+		return m.switchProvider()
+	}
 	if m.page == pageProjects {
 		return m.handleProjectKey(msg)
 	}
@@ -211,7 +248,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "esc":
-		if m.page == pageProjects {
+		if m.page == pageDetail {
+			m.page = pageSessions
 			return m, nil
 		}
 		m.capturePendingSelection()
@@ -283,6 +321,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			session, ok := m.currentSession()
 			if ok {
 				m.capturePendingSelection()
+				if m.provider == providerClaude {
+					return m, m.deleteClaudeCmd(session)
+				}
 				return m, m.removeCmd(session)
 			}
 		}
@@ -307,12 +348,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) helpText() string {
 	if m.page == pageProjects {
-		return mutedStyle.Render("输入字符筛选项目  Backspace 删除筛选  Esc 清空筛选  ↑/↓ 选择  Enter 打开  Ctrl+D 隐藏项目  Ctrl+U 隐藏列表  Ctrl+R 扫描  Ctrl+C 退出")
+		if m.provider == providerClaude {
+			return mutedStyle.Render("Tab 切换来源  输入字符筛选项目  Backspace 删除筛选  Esc 清空筛选  ↑/↓ 选择  Enter 打开  Ctrl+R 扫描  Ctrl+C 退出")
+		}
+		return mutedStyle.Render("Tab 切换来源  输入字符筛选项目  Backspace 删除筛选  Esc 清空筛选  ↑/↓ 选择  Enter 打开  Ctrl+D 隐藏项目  Ctrl+U 隐藏列表  Ctrl+R 扫描  Ctrl+C 退出")
 	}
 	if m.page == pageHiddenProjects {
 		return mutedStyle.Render("↑/↓ 选择  Enter/Ctrl+U 恢复项目  Esc 返回  Ctrl+C 退出")
 	}
-	return mutedStyle.Render("↑/↓ 行选择  ←/→ 列选择  Enter 打开  s 扫描  g 一键加载  n 重命名  b 备份  a 归档  r 恢复  m 删除  Esc 返回  q 退出")
+	if m.provider == providerClaude {
+		return mutedStyle.Render("Tab 切换来源  ↑/↓ 选择  Enter 打开  s 扫描  m 删除  Esc 返回  q 退出")
+	}
+	return mutedStyle.Render("Tab 切换来源  ↑/↓ 行选择  ←/→ 列选择  Enter 打开  s 扫描  g 一键加载  n 重命名  b 备份  a 归档  r 恢复  m 删除  Esc 返回  q 退出")
 }
 
 func (m Model) handleProjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -324,6 +371,9 @@ func (m Model) handleProjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.capturePendingSelection()
 		return m, m.scanCmd()
 	case "ctrl+d":
+		if m.provider == providerClaude {
+			return m, nil
+		}
 		project, ok := m.currentProject()
 		if ok && len(m.filteredProjects()) > 0 {
 			row := m.filteredProjectPosition(m.filteredProjects())
@@ -332,6 +382,9 @@ func (m Model) handleProjectKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "ctrl+u":
+		if m.provider == providerClaude {
+			return m, nil
+		}
 		m.page = pageHiddenProjects
 		m.ensureHiddenProjectSelection()
 		return m, nil
@@ -430,10 +483,36 @@ func (m Model) handleRenameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) scanCmd() tea.Cmd {
+	currentProvider := m.provider
 	return func() tea.Msg {
-		inventory, err := m.app.Scan()
-		return scanMsg{inventory: inventory, err: err}
+		var inventory domain.Inventory
+		var err error
+		if currentProvider == providerClaude {
+			inventory, err = m.app.ScanClaude()
+		} else {
+			inventory, err = m.app.Scan()
+		}
+		return scanMsg{provider: currentProvider, inventory: inventory, err: err}
 	}
+}
+
+func (m Model) switchProvider() (tea.Model, tea.Cmd) {
+	if m.provider == providerCodex {
+		m.provider = providerClaude
+		m.inventory = m.claudeInventory
+	} else {
+		m.provider = providerCodex
+		m.inventory = m.codexInventory
+	}
+	m.page = pageProjects
+	m.selectedProject = 0
+	m.projectFilter = ""
+	m.pendingProject = ""
+	m.pendingSession = ""
+	m.pendingSessionPath = ""
+	m.resetSessionSelection()
+	m.status = "正在扫描..."
+	return m, m.scanCmd()
 }
 
 func (m *Model) capturePendingSelection() {
@@ -494,8 +573,37 @@ func (m Model) removeCmd(session domain.SessionRecord) tea.Cmd {
 		if session.Source == domain.SessionSourceBackup || session.Source == domain.SessionSourceRemoved || session.Source == domain.SessionSourceArchived {
 			message = "已彻底删除 "
 		}
-		return actionMsg{message: message + result.SessionID, forgetSession: true, err: err}
+		return actionMsg{
+			message:                         message + result.SessionID,
+			forgetSession:                   true,
+			returnToProjectsIfProjectAbsent: true,
+			err:                             err,
+		}
 	}
+}
+
+func (m Model) deleteClaudeCmd(session domain.SessionRecord) tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.app.DeleteClaudeSession(session)
+		return actionMsg{
+			message:                         fmt.Sprintf("已删除 %s（%d 个路径）", result.SessionID, result.Deleted),
+			forgetSession:                   true,
+			returnToProjectsIfProjectAbsent: true,
+			err:                             err,
+		}
+	}
+}
+
+func inventoryHasProject(inventory domain.Inventory, projectPath string) bool {
+	if projectPath == "" {
+		return true
+	}
+	for _, project := range inventory.Projects {
+		if project.CWD == projectPath {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) archiveCmd(session domain.SessionRecord) tea.Cmd {
@@ -883,7 +991,7 @@ func newColumnRows() []int {
 
 func (m Model) viewProjects() string {
 	var builder strings.Builder
-	builder.WriteString(titleStyle.Render("codex-session-manager / 项目列表"))
+	builder.WriteString(titleStyle.Render(m.providerName() + " / 项目列表"))
 	builder.WriteString("\n\n")
 	if len(m.inventory.Projects) == 0 {
 		builder.WriteString("没有扫描到项目。\n")
@@ -937,6 +1045,9 @@ func (m Model) renderProjectLine(project domain.ProjectRecord) string {
 	firstLine := lipgloss.NewStyle().Width(width).Render(name)
 
 	stats := fmt.Sprintf("总数=%d 可见=%d 可恢复=%d 备份=%d", project.TotalSessions, project.VisibleCount, project.RecoverableCount, project.BackedUpCount)
+	if m.provider == providerClaude {
+		stats = fmt.Sprintf("会话=%d", project.TotalSessions)
+	}
 	prefix := strings.Repeat(" ", projectPathIndent) + trim(stats, width-projectPathIndent)
 	pathWidth := width - lipgloss.Width(prefix) - projectColumnGap
 	secondLine := prefix
@@ -1072,7 +1183,7 @@ func (m Model) viewSessions() string {
 	}
 	sessions := m.projectSessions()
 	var builder strings.Builder
-	builder.WriteString(titleStyle.Render("会话列表"))
+	builder.WriteString(titleStyle.Render(m.providerName() + " / 会话列表"))
 	builder.WriteString(" ")
 	builder.WriteString(mutedStyle.Render(project.CWD))
 	builder.WriteString("\n\n")
@@ -1115,8 +1226,32 @@ func (m Model) viewDetail() string {
 	)
 }
 
+func (m Model) viewProviderTabs() string {
+	codexTab := " Codex "
+	claudeTab := " Claude Code "
+	if m.provider == providerCodex {
+		codexTab = selectedStyle.Render(codexTab)
+		claudeTab = mutedStyle.Render(claudeTab)
+	} else {
+		codexTab = mutedStyle.Render(codexTab)
+		claudeTab = selectedStyle.Render(claudeTab)
+	}
+	return codexTab + "  " + claudeTab + mutedStyle.Render("  Tab 切换")
+}
+
+func (m Model) providerName() string {
+	if m.provider == providerClaude {
+		return "Claude Code"
+	}
+	return "Codex"
+}
+
 func (m Model) sessionColumns(sessions []domain.SessionRecord) []string {
 	groups := groupSessions(sessions)
+	if m.provider == providerClaude {
+		columnWidth := m.projectLineWidth()
+		return []string{renderSessionColumn("本地会话", groups[visibleColumn].Sessions, visibleColumn, m.selectedRow, visibleColumn, columnWidth)}
+	}
 	columnWidth := m.sessionColumnWidth()
 
 	columns := make([]string, 0, len(sessionColumnTitles))

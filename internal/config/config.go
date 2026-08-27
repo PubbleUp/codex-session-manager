@@ -12,6 +12,7 @@ import (
 
 type Config struct {
 	CodexHome                 string
+	ClaudeHome                string
 	ToolHome                  string
 	BackupDir                 string
 	RemovedDir                string
@@ -33,8 +34,13 @@ func Default() Config {
 		codexHome = filepath.Join(home, ".codex")
 	}
 	toolHome := filepath.Join(home, ".codex-session-manager")
+	claudeHome := os.Getenv("CLAUDE_CONFIG_DIR")
+	if claudeHome == "" && home != "" {
+		claudeHome = filepath.Join(home, ".claude")
+	}
 	return Config{
 		CodexHome:                 fsutil.NormalizePath(codexHome),
+		ClaudeHome:                fsutil.NormalizePath(claudeHome),
 		ToolHome:                  fsutil.NormalizePath(toolHome),
 		BackupDir:                 fsutil.NormalizePath(filepath.Join(toolHome, "backups")),
 		RemovedDir:                fsutil.NormalizePath(filepath.Join(toolHome, "removed")),
@@ -75,6 +81,10 @@ func Load() (Config, error) {
 		case "home", "codex_home":
 			if value != "" {
 				cfg.CodexHome = fsutil.NormalizePath(value)
+			}
+		case "claude_home":
+			if value != "" {
+				cfg.ClaudeHome = fsutil.NormalizePath(value)
 			}
 		case "tool_home":
 			if value != "" {
