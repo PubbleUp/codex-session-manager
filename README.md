@@ -56,6 +56,7 @@ codex-session-manager claude-projects         列出 Claude Code 项目
 codex-session-manager claude-list [project]   列出 Claude Code session
 codex-session-manager claude-delete <id>      删除 Claude Code session
 codex-session-manager version                 显示版本
+codex-session-manager update                  从 GitHub Releases 自动更新
 ```
 
 `<id>` 支持完整 session ID 或 ID 前缀。
