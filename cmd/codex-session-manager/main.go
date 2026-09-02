@@ -8,6 +8,7 @@ import (
 	"github.com/sunlock/codex-session-manager/internal/app"
 	"github.com/sunlock/codex-session-manager/internal/fsutil"
 	"github.com/sunlock/codex-session-manager/internal/tui"
+	"github.com/sunlock/codex-session-manager/internal/update"
 	"github.com/sunlock/codex-session-manager/internal/version"
 )
 
@@ -20,6 +21,17 @@ func main() {
 			return
 		case "version", "-v", "--version":
 			fmt.Print(version.Format())
+			return
+		case "update":
+			result, err := update.Update(version.Version)
+			if err != nil {
+				exitErr(err)
+			}
+			if result.Updated {
+				fmt.Printf("已更新到 %s，请重新运行命令。\n", result.Latest)
+			} else {
+				fmt.Printf("当前已是最新版本：%s\n", result.Current)
+			}
 			return
 		}
 	}
@@ -174,6 +186,7 @@ func printHelp() {
 	  codex-session-manager claude-list [项目路径] 列出 Claude Code 会话
 	  codex-session-manager claude-delete <会话ID> 删除 Claude Code 会话
   codex-session-manager version          显示版本号
+  codex-session-manager update           从 GitHub Releases 自动更新
 `)
 }
 

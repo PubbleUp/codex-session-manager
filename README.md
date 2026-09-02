@@ -25,6 +25,19 @@ go test ./...
 bin/codex-session-manager
 ```
 
+一键生成生产环境的 macOS、Linux、Windows `amd64` 和 `arm64` 版本：
+
+```bash
+./scripts/package-release.sh [版本号]
+```
+
+不传版本号时默认读取 `internal/version/version.go` 中的版本。产物生成到
+`bin/release/<版本号>/`，同时生成 `SHA256SUMS.txt`。例如：
+
+```bash
+./scripts/package-release.sh 0.2.0
+```
+
 ## 命令
 
 ```text
